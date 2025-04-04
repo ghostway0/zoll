@@ -127,7 +127,9 @@ class ToolEnv:
             try:
                 call_dict = json.loads(tool_match.group(1).strip())
             except json.JSONDecodeError:
-                return ToolError(text="Invalid JSON when tried calling tool")
+                return ToolError(
+                    text=f"Invalid JSON when tried calling tool: '{tool_match.group(1).strip()}'"
+                )
 
             name = call_dict.get("name")
             args = call_dict.get("args")
@@ -143,9 +145,7 @@ class ToolEnv:
     def step(
         self, conversation: Conversation, client: LLMClient, params: SamplingParams
     ) -> Optional[Result]:
-        raw_response = client.generate(
-            conversation.messages, params
-        ).strip()  # assume generate exists
+        raw_response = client.generate(conversation.messages, params).strip()
         conversation.add_message("assistant", raw_response)
 
         parsed = self._parse_response(raw_response)
