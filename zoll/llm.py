@@ -27,10 +27,17 @@ class SamplingParams:
         }
 
 
+@dataclass
+class ChatResponse:
+    text: str
+    completion_ids: List[int]
+    prompt_ids: List[int]
+
+
 class LLMClient:
     def generate(
         self, message: List[Dict[str, str]], params: SamplingParams
-    ) -> str: ...
+    ) -> List[ChatResponse]: ...
 
     def load_weight(self, name: str, weight: torch.Tensor): ...
 

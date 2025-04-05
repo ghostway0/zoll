@@ -3,7 +3,7 @@ from typing import Optional, List, Dict
 import torch
 import pytest
 
-from zoll.llm import LLMClient, SamplingParams
+from zoll.llm import LLMClient, SamplingParams, ChatResponse
 from zoll.multiturn import (
     ToolEnv,
     ToolInfo,
@@ -24,14 +24,13 @@ class MockLLMClient(LLMClient):
     def __init__(self, responses: Optional[List[str]] = None):
         self.responses = responses if responses else []
         self.call_count = 0
-        self.requests_log: List[Dict] = []
 
-    def generate(self, messages: List[Dict[str, str]], params: SamplingParams) -> str:
-        self.requests_log.append({"messages": messages, "params": params.dict()})
+    def generate(self, messages: List[Dict[str, str]], params: SamplingParams) -> List[ChatResponse]:
         if self.call_count < len(self.responses):
             response = self.responses[self.call_count]
             self.call_count += 1
-            return response
+            return [ChatResponse(text=response, completion_ids=[], prompt_ids=[])]
+
         raise ValueError("MockLLMClient ran out of responses")
 
     def load_weight(self, name: str, weight: torch.Tensor):
@@ -314,7 +313,8 @@ def test_run_conversation_max_steps(basic_tool_env, sampling_params):
     result = _run_single_conversation(
         env, mock_client, initial_prompt, sampling_params, max_steps
     )
-    assert result is None
+
+    assert result.final_answer is None
 
 
 def test_run_conversation_tool_fail(basic_tool_env, sampling_params):
@@ -355,4 +355,4 @@ def test_run_conversation_step_fail(basic_tool_env, sampling_params, mocker):
         env, mock_client, initial_prompt, sampling_params, max_steps
     )
 
-    assert result is None
+    assert result.final_answer is None

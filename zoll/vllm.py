@@ -10,6 +10,24 @@ from vllm.distributed.utils import StatelessProcessGroup
 from zoll.llm import LLMClient, SamplingParams
 
 
+def dict_to_chat_response(data: Dict[str, Any]) -> List[ChatResponse]:
+    outputs = data["responses"][0]["outputs"]
+    if not isinstance(outputs, list):
+        raise ValueError("'outputs' must be a list")
+
+    responses = []
+    for output in outputs:
+        responses.append(
+            ChatResponse(
+                text=output["text"],
+                completion_ids=output["completion_ids"],
+                prompt_ids=output["prompt_ids"],
+            )
+        )
+
+    return responses
+
+
 class VLLMClient(LLMClient):
     def __init__(
         self,
@@ -78,12 +96,14 @@ class VLLMClient(LLMClient):
         )
         self.pynccl_comm = PyNcclCommunicator(pg, device="cuda:0")  # they assume cuda:0
 
-    def generate(self, message: List[Dict[str, str]], params: SamplingParams) -> str:
+    def generate(
+        self, message: List[Dict[str, str]], params: SamplingParams
+    ) -> List[ChatResponse]:
         payload = {"messages": [message], **params.dict()}
         payload.setdefault("max_tokens", 16)
         response_data = self._request("POST", "/chat/", json=payload)
         try:
-            return response_data["responses"][0]["outputs"][0]["text"]
+            return dict_to_chat_response(response_data)
         except (KeyError, IndexError, TypeError) as e:
             raise ValueError(f"Failed to parse generate response structure: {e}") from e
 

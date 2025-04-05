@@ -51,6 +51,7 @@ class Result:
     messages: List[Dict[str, str]]
     final_answer: Optional[str] = None
     steps_taken: int = 0
+    tool_uses: int = 0
 
 
 @dataclass
@@ -58,6 +59,9 @@ class Conversation:
     initial_prompt: str
     system_prompt: str
     messages: List[Dict[str, str]] = field(default_factory=list)
+    steps_taken: int = 0
+    tool_uses: int = 0
+    completions: List[List[int]] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.messages:
@@ -68,6 +72,15 @@ class Conversation:
 
     def add_message(self, role: str, content: str):
         self.messages.append({"role": role, "content": content})
+
+    def result(self, answer: Optional[Answer]) -> Result:
+        return Result(
+            initial_prompt=self.initial_prompt,
+            messages=self.messages,
+            steps_taken=self.steps_taken,
+            tool_uses=self.tool_uses,
+            final_answer=answer.text if answer else None,
+        )
 
 
 class ToolEnv:
@@ -145,20 +158,20 @@ class ToolEnv:
     def step(
         self, conversation: Conversation, client: LLMClient, params: SamplingParams
     ) -> Optional[Result]:
-        raw_response = client.generate(conversation.messages, params).strip()
-        conversation.add_message("assistant", raw_response)
+        assert params.n == 1
 
-        parsed = self._parse_response(raw_response)
+        conversation.steps_taken += 1
+        raw_response = client.generate(conversation.messages, params)[0]
+        conversation.add_message("assistant", raw_response.text)
+
+        parsed = self._parse_response(raw_response.text)
 
         if isinstance(parsed, Answer):
-            return Result(
-                initial_prompt=conversation.initial_prompt,
-                messages=conversation.messages,
-                final_answer=parsed.text,
-            )
+            return conversation.result(parsed)
         elif isinstance(parsed, ToolError):
             conversation.add_message("user", f"<error>{parsed.text}</error>")
         elif isinstance(parsed, ToolCall):
+            conversation.tool_uses += 1
             result = self._execute_tool(parsed)
             conversation.add_message("user", f"<result>{result}</result>")
         # else: the llm is misaligned
@@ -175,32 +188,31 @@ def _run_single_conversation(
 ) -> Optional[Result]:
     system_prompt = env.format_system_prompt()
     conversation = Conversation(initial_prompt, system_prompt)
-    result = None
 
     for step_num in range(max_steps):
         try:
             step_result = env.step(conversation, client, sampling_params)
 
             if step_result is not None:
-                result = step_result
-                result.steps_taken = step_num + 1
-                break
+                return step_result
 
         except Exception:
-            return None
+            break
 
-    return result
+    return conversation.result(None)
 
 
 def run_conversations(
     env: ToolEnv,
     client: LLMClient,
-    initial_prompt: str,
+    initial_prompts: List[str],
     group_size: int,
     sampling_params: SamplingParams,
     max_steps: int,
     max_workers: Optional[int] = None,
 ) -> List[Result]:
+    assert group_size >= 2
+
     if max_workers is None:
         max_workers = group_size
 
@@ -211,14 +223,16 @@ def run_conversations(
                 _run_single_conversation,
                 env,
                 client,
-                initial_prompt,
+                initial_prompts[i // group_size],
                 sampling_params,
                 max_steps,
             )
-            for _ in range(group_size)
+            for i in range(len(initial_prompts) * group_size)
         ]
 
         for future in as_completed(futures):
-            results.append(future.result())
+            res = future.result()
+            if res is not None:
+                results.append(future.result())
 
     return results
